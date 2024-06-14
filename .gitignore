@@ -1,7 +1,7 @@
+dist/*
 .vs/
 .vscode/
-bin/
-build/
-obj/
-x64/
-*.exe
+.clang-format
+.editorconfig
+.env
+.ufbt
