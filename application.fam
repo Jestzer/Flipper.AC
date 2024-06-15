@@ -2,7 +2,7 @@
 
 App(
     appid="ac_app",  # Must be unique
-    name="App ac_app",  # Displayed in menus
+    name="AC App",  # Displayed in menus
     apptype=FlipperAppType.EXTERNAL,
     entry_point="ac_app_app",
     stack_size=2 * 1024,
