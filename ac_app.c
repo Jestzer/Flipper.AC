@@ -5,27 +5,44 @@
 #include "infrared_signal.h"
 
 // Global variables.
-static const char* current_text = "Hello world!";
-static const char* alternate_text = "You like pizza!";
+static const char* current_text = "The A/C should be on.";
+static const char* alternate_text = "The A/C should be off.";
 static bool text_alternate = false;
 static const uint32_t one_hour_interval = 3600000; // 1 hour in milliseconds
 static const uint32_t three_hour_interval = 10800000; // 3 hours in milliseconds
+static uint32_t next_signal_interval = one_hour_interval;
+static uint32_t remaining_time = one_hour_interval; // Initial remaining time in milliseconds
 
-// Define the infrared signal parameters for both signals
-static const uint32_t ir_address_1 = 0x00006F98;
-static const uint32_t ir_command_1 = 0x0000E619;
-static const uint32_t ir_command_2 = 0x0000F708;
+// Infrared signals to be used.
+static const uint32_t ir_address_1 = 0x00006F98; // The A/C itself
+static const uint32_t ir_command_1 = 0x0000E619; // Power button
+static const uint32_t ir_command_2 = 0x0000F708; // Mode button
 
 // Function to handle GUI events.
 static void ac_app_render_callback(Canvas* canvas, void* ctx) {
     UNUSED(ctx);
     canvas_clear(canvas);
     canvas_set_font(canvas, FontPrimary);
+
+    // Display the appropriate text.
     canvas_draw_str_aligned(
         canvas, 64, 32, AlignCenter, AlignCenter, text_alternate ? alternate_text : current_text);
+
+    // Calculate the remaining minutes.
+    uint32_t remaining_minutes = remaining_time / 60000;
+    char countdown_text[32];
+    if(remaining_minutes == 1) {
+        snprintf(countdown_text, sizeof(countdown_text), "Next signal in 1 min.");
+    } else {
+        snprintf(
+            countdown_text, sizeof(countdown_text), "Next signal in %lu mins.", remaining_minutes);
+    }
+
+    // Display the countdown text on-screen.
+    canvas_draw_str_aligned(canvas, 64, 48, AlignCenter, AlignCenter, countdown_text);
 }
 
-// Define a function to send the infrared signal
+// Function to send the infrared signal.
 static void send_ir_signal(uint32_t address, uint32_t command) {
     InfraredSignal* signal = infrared_signal_alloc();
     InfraredMessage message = {
@@ -43,37 +60,63 @@ static void send_ir_signal(uint32_t address, uint32_t command) {
         command);
 }
 
-// Function to send signals and update text based on the current state
+// Function to actually send signals and update text based on the current state.
 static void send_signals_and_update_text(void* ctx) {
     ViewPort* view_port = (ViewPort*)ctx;
 
     if(text_alternate) {
-        // Send "You like pizza!" signal
+        // Send "The A/C should be off." signal.
         send_ir_signal(ir_address_1, ir_command_1);
         text_alternate = false;
         current_text = alternate_text;
+        next_signal_interval = three_hour_interval;
     } else {
-        // Send "Hello world!" signals
+        // Send "The A/C should be on." signals.
         send_ir_signal(ir_address_1, ir_command_1);
-        furi_delay_ms(100); // Short delay between signals
+        furi_delay_ms(1000); // Delay. Should hopefully prevent weird states from occurring.
         send_ir_signal(ir_address_1, ir_command_2);
-        furi_delay_ms(100); // Short delay between signals
+        furi_delay_ms(1000); // Delay.
         send_ir_signal(ir_address_1, ir_command_2);
         text_alternate = true;
-        current_text = "Hello world!";
+        current_text = "The A/C should be on.";
+        next_signal_interval = one_hour_interval;
     }
 
-    // Update the text on the screen
+    // Update the text on the screen.
     view_port_update(view_port);
 
-    // Schedule the next signal based on the current state
+    // Schedule the next signal based on the current state.
     FuriTimer* timer =
         furi_timer_alloc(send_signals_and_update_text, FuriTimerTypeOnce, view_port);
-    if(text_alternate) {
-        furi_timer_start(timer, one_hour_interval);
+    furi_timer_start(timer, next_signal_interval);
+    remaining_time = next_signal_interval;
+}
+
+// Timer callback to update the countdown displayed on-screen.
+static void update_countdown(void* ctx) {
+    ViewPort* view_port = (ViewPort*)ctx;
+
+    if(remaining_time >= 60000) {
+        remaining_time -= 60000; // Decrease by 1 minute at a time.
     } else {
-        furi_timer_start(timer, three_hour_interval);
+        remaining_time = 0;
     }
+
+    // Log the remaining time.
+    uint32_t remaining_minutes = remaining_time / 60000;
+    if(remaining_minutes == 1) {
+        FURI_LOG_I("countdown", "Time remaining until next signal: 1 minute");
+    } else {
+        FURI_LOG_I(
+            "countdown", "Time remaining until next signal: %lu minutes", remaining_minutes);
+    }
+
+    // Update the text on the screen.
+    view_port_update(view_port);
+
+    // Schedule the next countdown update in one minute.
+    FuriTimer* countdown_timer = furi_timer_alloc(update_countdown, FuriTimerTypeOnce, view_port);
+    furi_timer_start(countdown_timer, 60000);
 }
 
 // Handle input.
@@ -81,16 +124,15 @@ static void ac_app_input_callback(InputEvent* input_event, void* ctx) {
     furi_assert(ctx);
     FURI_LOG_I(
         "ac_app", "Input event received: type=%d, key=%d", input_event->type, input_event->key);
-    if(input_event->key == InputKeyBack) {
+    if(input_event->key == InputKeyBack) { // You pressed the back button, so we're exiting.
         FURI_LOG_I("ac_app", "Received input to close the application.");
-        // Stop the event loop to exit the application
         FuriMessageQueue* event_queue = (FuriMessageQueue*)ctx;
         InputEvent exit_event = {.type = InputTypeShort, .key = InputKeyBack};
         furi_message_queue_put(event_queue, &exit_event, FuriWaitForever);
     }
 }
 
-int32_t ac_app_app(void* p) {
+int32_t ac_app_app(void* p) { // The actual sequence of events.
     UNUSED(p);
 
     FuriMessageQueue* event_queue = furi_message_queue_alloc(8, sizeof(InputEvent));
@@ -105,17 +147,21 @@ int32_t ac_app_app(void* p) {
     Gui* gui = furi_record_open(RECORD_GUI);
     gui_add_view_port(gui, view_port, GuiLayerFullscreen);
 
-    // Send the initial "Hello world!" signals as soon as the app opens
+    // Send the initial "The A/C should be on." signals as soon as the app opens
     send_ir_signal(ir_address_1, ir_command_1);
-    furi_delay_ms(100); // Short delay between signals
+    furi_delay_ms(1000); // Delay.
     send_ir_signal(ir_address_1, ir_command_2);
-    furi_delay_ms(100); // Short delay between signals
+    furi_delay_ms(1000); // Delay.
     send_ir_signal(ir_address_1, ir_command_2);
 
-    // Schedule the first "You like pizza!" signal to be sent in one hour
+    // Schedule the first "The A/C should be off." signal to be sent in one hour
     FuriTimer* timer =
         furi_timer_alloc(send_signals_and_update_text, FuriTimerTypeOnce, view_port);
     furi_timer_start(timer, one_hour_interval);
+
+    // Schedule the first countdown update in one minute
+    FuriTimer* countdown_timer = furi_timer_alloc(update_countdown, FuriTimerTypeOnce, view_port);
+    furi_timer_start(countdown_timer, 60000);
 
     // Run the event loop so the app doesn't stop until we say so.
     InputEvent event;
@@ -132,6 +178,8 @@ int32_t ac_app_app(void* p) {
     // Cleanup.
     furi_timer_stop(timer);
     furi_timer_free(timer);
+    furi_timer_stop(countdown_timer);
+    furi_timer_free(countdown_timer);
     gui_remove_view_port(gui, view_port);
     view_port_free(view_port);
     furi_record_close(RECORD_GUI);
