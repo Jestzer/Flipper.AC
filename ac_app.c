@@ -2,12 +2,17 @@
 #include <furi_hal_infrared.h>
 #include <gui/gui.h>
 #include <input/input.h>
+#include "infrared_signal.h"
 
 // Global variables.
 static const char* current_text = "Hello world!";
 static const char* alternate_text = "You like pizza!";
 static bool text_alternate = false;
 static const uint32_t text_change_interval = 6000; // 6000 ms = 6 seconds
+
+// Define the infrared signal parameters
+static const uint32_t ir_address = 0x986F0000;
+static const uint32_t ir_command = 0x19E60000;
 
 // Function to handle GUI events.
 static void ac_app_render_callback(Canvas* canvas, void* ctx) {
@@ -18,13 +23,29 @@ static void ac_app_render_callback(Canvas* canvas, void* ctx) {
         canvas, 64, 32, AlignCenter, AlignCenter, text_alternate ? alternate_text : current_text);
 }
 
-// Read the name...
+// Define a function to send the infrared signal
+static void send_ir_signal() {
+    InfraredSignal* signal = infrared_signal_alloc();
+    InfraredMessage message = {
+        .protocol = InfraredProtocolNECext,
+        .address = ir_address,
+        .command = ir_command,
+    };
+    infrared_signal_set_message(signal, &message);
+    infrared_signal_transmit(signal);
+    infrared_signal_free(signal);
+    FURI_LOG_I("ir_tx", "Started infrared transmission");
+}
+
+// Change text on screen and send IR signal.
 static void change_text_periodically(void* ctx) {
     UNUSED(ctx);
     text_alternate = !text_alternate;
     // Perform GUI update here
     ViewPort* view_port = (ViewPort*)ctx;
     view_port_update(view_port);
+    send_ir_signal();
+    FURI_LOG_I("ac_app", "Changed text and sent IR signal");
 }
 
 // Handle input.
@@ -45,7 +66,7 @@ int32_t ac_app_app(void* p) {
     UNUSED(p);
 
     FuriMessageQueue* event_queue = furi_message_queue_alloc(8, sizeof(InputEvent));
-    FURI_LOG_I("ac_app", "the app started mf.");
+    FURI_LOG_I("ac_app", "The app started.");
 
     // Creating and configuring a ViewPort.
     ViewPort* view_port = view_port_alloc();
