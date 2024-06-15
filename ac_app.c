@@ -8,14 +8,13 @@
 static const char* current_text = "Hello world!";
 static const char* alternate_text = "You like pizza!";
 static bool text_alternate = false;
-static const uint32_t text_change_interval = 6000; // 6000 ms = 6 seconds
-static uint32_t received_timings[256];
-static size_t received_timings_size = 0;
-static bool signal_received = false;
+static const uint32_t one_hour_interval = 3600000; // 1 hour in milliseconds
+static const uint32_t three_hour_interval = 10800000; // 3 hours in milliseconds
 
-// Define the infrared signal parameters
-static const uint32_t ir_address = 0x00006F98;
-static const uint32_t ir_command = 0x0000E619;
+// Define the infrared signal parameters for both signals
+static const uint32_t ir_address_1 = 0x00006F98;
+static const uint32_t ir_command_1 = 0x0000E619;
+static const uint32_t ir_command_2 = 0x0000F708;
 
 // Function to handle GUI events.
 static void ac_app_render_callback(Canvas* canvas, void* ctx) {
@@ -27,102 +26,54 @@ static void ac_app_render_callback(Canvas* canvas, void* ctx) {
 }
 
 // Define a function to send the infrared signal
-static void send_ir_signal() {
+static void send_ir_signal(uint32_t address, uint32_t command) {
     InfraredSignal* signal = infrared_signal_alloc();
     InfraredMessage message = {
         .protocol = InfraredProtocolNECext,
-        .address = ir_address,
-        .command = ir_command,
+        .address = address,
+        .command = command,
     };
     infrared_signal_set_message(signal, &message);
     infrared_signal_transmit(signal);
     infrared_signal_free(signal);
-    FURI_LOG_I("ir_tx", "Started infrared transmission");
+    FURI_LOG_I(
+        "ir_tx",
+        "Started infrared transmission: address=0x%08lX, command=0x%08lX",
+        address,
+        command);
 }
 
-// Callback function for infrared signal capture
-static void capture_isr_callback(void* context, bool complete, uint32_t timing) {
-    UNUSED(context);
-    if(complete) {
-        signal_received = true;
-        FURI_LOG_I("ir_rx", "Infrared signal capture complete");
-    } else {
-        if(received_timings_size < 256) {
-            received_timings[received_timings_size++] = timing;
-        }
-    }
-}
-
-// Callback function for infrared receive timeout
-static void timeout_isr_callback(void* context) {
-    UNUSED(context);
-    signal_received = false;
-    FURI_LOG_I("ir_rx", "Infrared receive timeout");
-}
-
-// Function to decode and log infrared signals
-static void decode_ir_signal() {
-    if(signal_received) {
-        FURI_LOG_I("ir_rx", "Received raw signal: timings_size=%zu", received_timings_size);
-        for(size_t i = 0; i < received_timings_size; i++) {
-            FURI_LOG_I("ir_rx", "Timing[%zu]: %lu", i, received_timings[i]);
-        }
-
-        // Decode NEC protocol
-        if(received_timings_size >= 67) { // NEC protocol should have at least 67 timings
-            uint32_t address = 0;
-            uint32_t command = 0;
-
-            // Decode address
-            for(size_t i = 0; i < 16; i++) {
-                if(received_timings[2 * i + 3] > 1000) { // Long space means '1'
-                    address |= (1 << i);
-                }
-            }
-
-            // Decode command
-            for(size_t i = 0; i < 16; i++) {
-                if(received_timings[2 * i + 35] > 1000) { // Long space means '1'
-                    command |= (1 << i);
-                }
-            }
-
-            FURI_LOG_I(
-                "ir_rx", "Decoded NEC signal: address=0x%08lX, command=0x%08lX", address, command);
-        } else {
-            FURI_LOG_I("ir_rx", "Received signal does not match NEC protocol");
-        }
-    } else {
-        FURI_LOG_I("ir_rx", "No infrared signal received");
-    }
-}
-
-// Function to read and log infrared signals
-static void read_ir_signal() {
-    received_timings_size = 0;
-    signal_received = false;
-    furi_hal_infrared_async_rx_set_capture_isr_callback(capture_isr_callback, NULL);
-    furi_hal_infrared_async_rx_set_timeout_isr_callback(timeout_isr_callback, NULL);
-    furi_hal_infrared_async_rx_start();
-
-    // Wait for signal reception or timeout
-    furi_delay_ms(1000);
-
-    furi_hal_infrared_async_rx_stop();
-
-    decode_ir_signal();
-}
-
-// Change text on screen, send IR signal, and read IR signal.
-static void change_text_periodically(void* ctx) {
-    UNUSED(ctx);
-    text_alternate = !text_alternate;
-    // Perform GUI update here
+// Function to send signals and update text based on the current state
+static void send_signals_and_update_text(void* ctx) {
     ViewPort* view_port = (ViewPort*)ctx;
+
+    if(text_alternate) {
+        // Send "You like pizza!" signal
+        send_ir_signal(ir_address_1, ir_command_1);
+        text_alternate = false;
+        current_text = alternate_text;
+    } else {
+        // Send "Hello world!" signals
+        send_ir_signal(ir_address_1, ir_command_1);
+        furi_delay_ms(100); // Short delay between signals
+        send_ir_signal(ir_address_1, ir_command_2);
+        furi_delay_ms(100); // Short delay between signals
+        send_ir_signal(ir_address_1, ir_command_2);
+        text_alternate = true;
+        current_text = "Hello world!";
+    }
+
+    // Update the text on the screen
     view_port_update(view_port);
-    send_ir_signal();
-    read_ir_signal();
-    FURI_LOG_I("ac_app", "Changed text, sent IR signal, and read IR signal");
+
+    // Schedule the next signal based on the current state
+    FuriTimer* timer =
+        furi_timer_alloc(send_signals_and_update_text, FuriTimerTypeOnce, view_port);
+    if(text_alternate) {
+        furi_timer_start(timer, one_hour_interval);
+    } else {
+        furi_timer_start(timer, three_hour_interval);
+    }
 }
 
 // Handle input.
@@ -154,10 +105,17 @@ int32_t ac_app_app(void* p) {
     Gui* gui = furi_record_open(RECORD_GUI);
     gui_add_view_port(gui, view_port, GuiLayerFullscreen);
 
-    // Create a timer for periodic text updates.
-    FuriTimer* text_update_timer =
-        furi_timer_alloc(change_text_periodically, FuriTimerTypePeriodic, view_port);
-    furi_timer_start(text_update_timer, text_change_interval);
+    // Send the initial "Hello world!" signals as soon as the app opens
+    send_ir_signal(ir_address_1, ir_command_1);
+    furi_delay_ms(100); // Short delay between signals
+    send_ir_signal(ir_address_1, ir_command_2);
+    furi_delay_ms(100); // Short delay between signals
+    send_ir_signal(ir_address_1, ir_command_2);
+
+    // Schedule the first "You like pizza!" signal to be sent in one hour
+    FuriTimer* timer =
+        furi_timer_alloc(send_signals_and_update_text, FuriTimerTypeOnce, view_port);
+    furi_timer_start(timer, one_hour_interval);
 
     // Run the event loop so the app doesn't stop until we say so.
     InputEvent event;
@@ -172,8 +130,8 @@ int32_t ac_app_app(void* p) {
     }
 
     // Cleanup.
-    furi_timer_stop(text_update_timer);
-    furi_timer_free(text_update_timer);
+    furi_timer_stop(timer);
+    furi_timer_free(timer);
     gui_remove_view_port(gui, view_port);
     view_port_free(view_port);
     furi_record_close(RECORD_GUI);
