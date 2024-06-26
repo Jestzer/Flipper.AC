@@ -90,10 +90,6 @@ static void send_signals_and_update_text(void* ctx) {
     view_port_update(view_port);
 
     // Schedule the next signal based on the current state.
-    if(signal_timer) {
-        furi_timer_free(signal_timer);
-    }
-    signal_timer = furi_timer_alloc(send_signals_and_update_text, FuriTimerTypeOnce, view_port);
     furi_timer_start(signal_timer, next_signal_interval);
     remaining_time = next_signal_interval;
 }
@@ -121,10 +117,6 @@ static void update_countdown(void* ctx) {
     view_port_update(view_port);
 
     // Schedule the next countdown update in one minute.
-    if(countdown_timer) {
-        furi_timer_free(countdown_timer);
-    }
-    countdown_timer = furi_timer_alloc(update_countdown, FuriTimerTypeOnce, view_port);
     furi_timer_start(countdown_timer, 60000);
 }
 
