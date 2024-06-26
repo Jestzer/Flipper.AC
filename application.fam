@@ -6,12 +6,12 @@ App(
     apptype=FlipperAppType.EXTERNAL,
     entry_point="ac_app_app",
     stack_size=2 * 1024,
-    fap_category="Examples",
+    fap_category="Infrared",
     # Optional values
-    # fap_version="0.1",
+    fap_version="0.2",
     fap_icon="ac_app.png",  # 10x10 1-bit PNG
     fap_description="Control A/C on a timer.",
-    # fap_author="J. Doe",
+    fap_author="Jestzer",
     fap_weburl="https://github.com/Jestzer/Flipper.AC",
     fap_icon_assets="images",  # Image assets to compile for this application
 )

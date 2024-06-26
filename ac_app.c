@@ -173,7 +173,7 @@ int32_t ac_app_app(void* p) { // The actual sequence of events.
     countdown_timer = furi_timer_alloc(update_countdown, FuriTimerTypeOnce, view_port);
     furi_timer_start(countdown_timer, 60000);
 
-    // Run the event loop so the app doesn't stop until we say so.
+    // Run the input event loop so the app doesn't stop until we say so.
     InputEvent event;
     while(true) {
         if(furi_message_queue_get(event_queue, &event, FuriWaitForever) == FuriStatusOk) {
