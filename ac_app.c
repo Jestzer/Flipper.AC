@@ -7,7 +7,7 @@
 // Global variables.
 static const char* ac_on_text = "The A/C should be on.";
 static const char* ac_off_text = "The A/C should be off.";
-static bool ac_is_on = true;
+static bool ac_is_on = false;
 static const uint32_t one_hour_interval = 3600000; // 1 hour in milliseconds
 static const uint32_t three_hour_interval = 10800000; // 3 hours in milliseconds
 static uint32_t next_signal_interval = one_hour_interval;
@@ -18,7 +18,7 @@ static const uint32_t ir_address_1 = 0x00006F98; // The A/C itself
 static const uint32_t ir_command_1 = 0x0000E619; // Power button
 static const uint32_t ir_command_2 = 0x0000F708; // Mode button
 
-// Timers. Putting there here to avoid NULL pointer deferences.
+// Timers. Putting them here to avoid NULL pointer dereferences.
 static FuriTimer* signal_timer = NULL;
 static FuriTimer* countdown_timer = NULL;
 
@@ -90,6 +90,7 @@ static void send_signals_and_update_text(void* ctx) {
     view_port_update(view_port);
 
     // Schedule the next signal based on the current state.
+    furi_timer_stop(signal_timer);
     furi_timer_start(signal_timer, next_signal_interval);
     remaining_time = next_signal_interval;
 }
@@ -117,6 +118,7 @@ static void update_countdown(void* ctx) {
     view_port_update(view_port);
 
     // Schedule the next countdown update in one minute.
+    furi_timer_stop(countdown_timer);
     furi_timer_start(countdown_timer, 60000);
 }
 
@@ -148,21 +150,14 @@ int32_t ac_app_app(void* p) { // The actual sequence of events.
     Gui* gui = furi_record_open(RECORD_GUI);
     gui_add_view_port(gui, view_port, GuiLayerFullscreen);
 
-    // Turn on the A/C as soon as the app opens.
-    send_ir_signal(ir_address_1, ir_command_1);
-    furi_delay_ms(1000); // Delay.
-    send_ir_signal(ir_address_1, ir_command_2);
-    furi_delay_ms(1000); // Delay.
-    send_ir_signal(ir_address_1, ir_command_2);
-    FURI_LOG_I("ac_app", "The A/C should be on.");
-    view_port_update(view_port);
-
-    // Schedule the first "The A/C should be off." signal to be sent in 1 hour.
+    // Initialize the timers
     signal_timer = furi_timer_alloc(send_signals_and_update_text, FuriTimerTypeOnce, view_port);
-    furi_timer_start(signal_timer, one_hour_interval);
+    countdown_timer = furi_timer_alloc(update_countdown, FuriTimerTypeOnce, view_port);
+
+    // Start sending signals.
+    send_signals_and_update_text(view_port);
 
     // Schedule the first countdown update in 1 minute.
-    countdown_timer = furi_timer_alloc(update_countdown, FuriTimerTypeOnce, view_port);
     furi_timer_start(countdown_timer, 60000);
 
     // Run the input event loop so the app doesn't stop until we say so.
